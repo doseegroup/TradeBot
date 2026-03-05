@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables (contains secrets)
+.env
+
+# Database
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Logs
+logs/
+
+# Reports (generated files)
+reports/
+
+# Exports (generated files)
+exports/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,15 @@
+{
+  "symbols": [
+    "QQQ",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "TSLA",
+    "AMD",
+    "PLTR"
+  ],
+  "description": "監視銘柄リスト。QQQ は市場レジームフィルター用に必須。"
+}
