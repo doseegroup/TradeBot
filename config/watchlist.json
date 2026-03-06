@@ -1,6 +1,7 @@
 {
   "symbols": [
     "QQQ",
+    "SPY",
     "AAPL",
     "MSFT",
     "NVDA",
@@ -11,5 +12,5 @@
     "AMD",
     "PLTR"
   ],
-  "description": "監視銘柄リスト。QQQ は市場レジームフィルター用に必須。"
+  "description": "監視銘柄リスト。QQQ・SPY はレジームフィルター用（売買シグナル生成対象外）。"
 }

@@ -14,6 +14,7 @@ process.env['DATA_PROVIDER'] = 'mock';
 import type { PriceRow } from '../src/db/prices';
 import { evaluateBreakout, calcPositionSize } from '../src/strategy/breakout';
 import { liquidityFilter, marketRegimeFilter } from '../src/strategy/filters';
+import { atr } from '../src/utils/math';
 
 function makeBar(overrides: Partial<PriceRow> & { date: string }): PriceRow {
   return {
@@ -168,5 +169,108 @@ describe('marketRegimeFilter', () => {
     }));
     const result = marketRegimeFilter(bars);
     assert.equal(result.passed, false);
+  });
+
+  // ─── v1.1: SPY / VIX ──────────────────────────────────────────────────────
+
+  /** 単調増加バーを生成（QQQ/SPY で上昇トレンドを作るために使用）*/
+  function risingBars(symbol: string, n: number, start: number): PriceRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      symbol,
+      date:   `2023-01-${String(i + 1).padStart(3, '0')}`,
+      open:   start + i,
+      high:   start + i + 1,
+      low:    start + i - 1,
+      close:  start + i,
+      volume: 5_000_000,
+    }));
+  }
+
+  test('SPY close < SPY SMA200 → 不通過', () => {
+    const qqqBars = risingBars('QQQ', 210, 300);
+    // SPY は下降トレンド: close[i]=500-i → latest=291 < SMA200≈390.5
+    const spyBars: PriceRow[] = Array.from({ length: 210 }, (_, i) => ({
+      symbol: 'SPY',
+      date:   `2023-01-${String(i + 1).padStart(3, '0')}`,
+      open:   500 - i,
+      high:   501 - i,
+      low:    499 - i,
+      close:  500 - i,
+      volume: 5_000_000,
+    }));
+    const result = marketRegimeFilter(qqqBars, spyBars);
+    assert.equal(result.passed, false, `期待: fail, 実際: ${result.reason}`);
+    assert.ok(result.reason.includes('SPY'), `reason に SPY を含むべき: ${result.reason}`);
+  });
+
+  test('VIX >= VIX_MAX(25) → 不通過', () => {
+    const qqqBars = risingBars('QQQ', 210, 300);
+    const spyBars = risingBars('SPY', 210, 400);
+    const vixBars: PriceRow[] = [
+      makeBar({ symbol: '^VIX', date: '2024-01-01', close: 30, high: 31, low: 29 }),
+    ];
+    const result = marketRegimeFilter(qqqBars, spyBars, vixBars);
+    assert.equal(result.passed, false, `期待: fail, 実際: ${result.reason}`);
+    assert.ok(result.reason.includes('VIX'), `reason に VIX を含むべき: ${result.reason}`);
+  });
+
+  test('VIX データなし → スキップして通過', () => {
+    const qqqBars = risingBars('QQQ', 210, 300);
+    const spyBars = risingBars('SPY', 210, 400);
+    const result  = marketRegimeFilter(qqqBars, spyBars, []);
+    assert.equal(result.passed, true, `期待: pass, 実際: ${result.reason}`);
+    assert.equal(result.details.vixSkipped, true, 'vixSkipped が true であるべき');
+  });
+
+  test('QQQ + SPY + VIX すべて通過', () => {
+    const qqqBars = risingBars('QQQ', 210, 300);
+    const spyBars = risingBars('SPY', 210, 400);
+    const vixBars: PriceRow[] = [
+      makeBar({ symbol: '^VIX', date: '2024-01-01', close: 18, high: 19, low: 17 }),
+    ];
+    const result = marketRegimeFilter(qqqBars, spyBars, vixBars);
+    assert.equal(result.passed, true, `期待: pass, 実際: ${result.reason}`);
+    assert.ok(result.details.vix !== null);
+    assert.equal(result.details.vix!.passed, true);
+  });
+});
+
+// ─── atr ─────────────────────────────────────────────────────────────────────
+
+describe('atr', () => {
+  test('均一バー(high=102,low=98,close=100) → ATR(14) = 4', () => {
+    // TR = max(high-low=4, |high-prevClose|=2, |low-prevClose|=2) = 4 → ATR = 4
+    const bars = Array.from({ length: 15 }, () => ({
+      high: 102, low: 98, close: 100,
+    }));
+    const result = atr(bars, 14);
+    assert.ok(result !== null, 'ATR は null でないはず');
+    assert.equal(result, 4);
+  });
+
+  test('データ不足(14件, period=14) → null', () => {
+    // period+1 = 15 件必要なのに 14 件しかない
+    const bars = Array.from({ length: 14 }, () => ({
+      high: 102, low: 98, close: 100,
+    }));
+    const result = atr(bars, 14);
+    assert.equal(result, null);
+  });
+
+  test('ちょうど period+1 件(15件) → null でなく正の値', () => {
+    const bars = Array.from({ length: 15 }, () => ({
+      high: 110, low: 90, close: 100,
+    }));
+    const result = atr(bars, 14);
+    assert.ok(result !== null, 'ATR は null でないはず');
+    assert.ok(result > 0, `ATR は正の値であるべき: ${result}`);
+  });
+
+  test('ヒゲなし横ばいバー(high=low=close=100) → ATR = 0', () => {
+    const bars = Array.from({ length: 15 }, () => ({
+      high: 100, low: 100, close: 100,
+    }));
+    const result = atr(bars, 14);
+    assert.equal(result, 0);
   });
 });

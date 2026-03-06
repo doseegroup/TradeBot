@@ -5,12 +5,12 @@
 ## 概要
 
 - **データ取得**: Yahoo Finance（無料）/ Alpha Vantage / モック
-- **戦略**: 20日高値ブレイク + 出来高急増 (2x)
-- **フィルター**: 流動性・市場レジーム（QQQ SMA）・決算
+- **戦略**: 20日高値ブレイク + 出来高急増 (2x) + ATR 上抜け条件（ダマシ削減）
+- **フィルター**: 流動性・市場レジーム（QQQ/SPY SMA + VIX）・決算
 - **約定モデル**: T+1（シグナル翌営業日の始値で約定、スリッページ 0.1%）
 - **リスク管理**: 日次損失上限 3%・最大2銘柄・3連敗→48h クールダウン
 - **通知**: LINE Messaging API
-- **レポート**: AI（OpenAI）またはテンプレートで日次 Markdown レポート生成
+- **レポート**: AI（OpenAI）またはテンプレートで日次 Markdown レポート生成（レジーム判定・DD・連敗含む）
 
 ---
 
@@ -44,6 +44,12 @@ OPENAI_API_KEY=sk-xxxx
 # 初期資金（USD）
 INITIAL_EQUITY=10000
 MAX_POSITION_USD=1000
+
+# 戦略パラメータ（任意。デフォルト値を示す）
+ENABLE_ATR_BREAKOUT=true   # ATR 上抜け条件（ダマシ削減）
+ATR_PERIOD=14              # ATR 計算期間
+ATR_MULT=0.5               # ATR 倍率
+VIX_MAX=25                 # VIX 上限（超えたら新規エントリー禁止）
 ```
 
 ### 3. DB 初期化
@@ -92,17 +98,19 @@ npm run report
 
 ## cron 設定例（米国市場クローズ後）
 
-米国東部時間 16:00 ≒ 日本時間 翌6:00 (夏時間) / 翌7:00 (冬時間)
+> ⚠️ 夏冬時間の切り替えで米株クローズ時刻が 1 時間ずれます（夏: JST 05:00 / 冬: JST 06:00）。
 
 ```cron
-# 平日（米市場営業日）16:10 ET にデータ取得 + 取引実行
-10 6 * * 2-6  cd /path/to/TradeBot && npm run run  >> logs/cron.log 2>&1
+# 冬時間（11月第1日曜〜3月第2日曜）JST 07:00 に実行
+0  7 * * 1-5  cd /path/to/TradeBot && npm run run    >> logs/cron.log 2>&1
+10 7 * * 1-5  cd /path/to/TradeBot && npm run report >> logs/cron.log 2>&1
 
-# 16:30 ET に日次レポート生成
-30 6 * * 2-6  cd /path/to/TradeBot && npm run report >> logs/cron.log 2>&1
+# 夏時間（3月第2日曜〜11月第1日曜）JST 06:00 に実行
+# 0  6 * * 1-5  cd /path/to/TradeBot && npm run run    >> logs/cron.log 2>&1
+# 10 6 * * 1-5  cd /path/to/TradeBot && npm run report >> logs/cron.log 2>&1
 ```
 
-> `TZ=America/New_York` または `TZ=Asia/Tokyo` を `.env` に設定してください。
+`crontab -e` で登録し、`/path/to/TradeBot` を実際のパスに置き換えてください。
 
 ---
 
@@ -178,9 +186,12 @@ TradeBot/
 ### エントリー（BUY）
 
 ```
-close_today > max(high[-20:-1])           ← 20日高値ブレイク
-AND volume_today > avg(volume[-20:-1]) × 2 ← 出来高急増
+close_today > max(high[-20:-1])                          ← 20日高値ブレイク
+AND volume_today > avg(volume[-20:-1]) × 2               ← 出来高急増
+AND close_today > highest20 + ATR_MULT × ATR(ATR_PERIOD) ← ATR 上抜け（ダマシ削減）
 ```
+
+ATR 条件は `ENABLE_ATR_BREAKOUT=false` で無効化できます（デフォルト: `true`）。
 
 ### イグジット
 
@@ -227,10 +238,11 @@ qty = min(riskShares, maxShares)
 - 株価 > $10
 - 20日平均出来高 > 100万株
 
-### 市場レジームフィルター（QQQ）
-- QQQ close > SMA(200)
-- QQQ SMA(50) > SMA(200)
-- 両条件を満たさない場合、新規エントリー禁止
+### 市場レジームフィルター（QQQ / SPY / VIX）
+- **QQQ**: close > SMA(200) かつ SMA(50) > SMA(200)
+- **SPY**: close > SMA(200)（データ不足時スキップ）
+- **VIX**: close < `VIX_MAX`（デフォルト 25）。データ取得失敗時はスキップして継続
+- 3条件をすべて満たさない場合、新規エントリー禁止
 
 ### 決算フィルター
 - `config/earnings.csv` に `symbol,date` 形式で決算日を記載
